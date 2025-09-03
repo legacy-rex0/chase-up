@@ -1,5 +1,5 @@
-# Multi-stage build for Laravel production application
-FROM php:8.3-fpm-alpine AS base
+# Single-stage Laravel Docker image
+FROM php:8.3-fpm-alpine
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -12,6 +12,9 @@ RUN apk add --no-cache \
     libpng-dev \
     libjpeg-turbo-dev \
     freetype-dev \
+    nodejs \
+    npm \
+    curl \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install \
         pdo \
@@ -31,34 +34,21 @@ WORKDIR /var/www/html
 # Copy composer files
 COPY composer.json composer.lock ./
 
-# Install PHP dependencies (production only)
+# Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader --no-scripts --no-autoloader
 
-# Copy application code (including .env if it exists)
+# Copy package files and install Node.js dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy application code
 COPY . .
 
-# Ensure .env file has correct permissions if it exists
-RUN if [ -f .env ]; then \
-        chown www-data:www-data .env && \
-        chmod 644 .env; \
-    fi
+# Build frontend assets
+RUN npm run build
 
 # Install Composer autoloader
 RUN composer dump-autoload --optimize --no-dev --classmap-authoritative
-
-# Build frontend assets
-FROM node:18-alpine AS node-builder
-WORKDIR /var/www/html
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npm run build
-
-# Production stage
-FROM base AS production
-
-# Copy built assets from node stage
-COPY --from=node-builder /var/www/html/public/build ./public/build
 
 # Create necessary directories and set permissions
 RUN mkdir -p \
@@ -91,10 +81,6 @@ RUN chmod +x /start.sh
 
 # Expose port
 EXPOSE 80
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost/ || exit 1
 
 # Start services
 CMD ["/start.sh"]
